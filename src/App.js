@@ -47,6 +47,7 @@ import {
     hash_plutus_data,
     ScriptDataHash, Ed25519KeyHash, NativeScript, StakeCredential
 } from "@emurgo/cardano-serialization-lib-asmjs"
+import "./App.css";
 import {blake2b} from "blakejs";
 let Buffer = require('buffer/').Buffer
 let blake = require('blakejs')
@@ -60,12 +61,13 @@ export default class App extends React.Component
 
         this.state = {
             selectedTabId: "1",
-            whichWalletSelected: "ccvault",
+            whichWalletSelected: undefined,
             walletFound: false,
             walletIsEnabled: false,
             walletName: undefined,
             walletIcon: undefined,
             walletAPIVersion: undefined,
+            wallets: [],
 
             networkId: undefined,
             Utxos: undefined,
@@ -130,7 +132,39 @@ export default class App extends React.Component
             coinsPerUtxoWord: "34482",
         }
 
+        this.pollWallets = this.pollWallets.bind(this);
+    }
 
+    /**
+     * Poll the wallets it can read from the browser.
+     * Sometimes the html document loads before the browser initialized browser plugins (like Nami or Flint).
+     * So we try to poll the wallets 3 times (with 1 second in between each try).
+     *
+     * Note: CCVault and Eternl are the same wallet, Eternl is a rebrand of CCVault
+     * So both of these wallets as the Eternl injects itself twice to maintain
+     * backward compatibility
+     *
+     * @param count The current try count.
+     */
+    pollWallets = (count = 0) => {
+        const wallets = [];
+        for(const key in window.cardano) {
+            if (window.cardano[key].enable && wallets.indexOf(key) === -1) {
+                wallets.push(key);
+            }
+        }
+        if (wallets.length === 0 && count < 3) {
+            setTimeout(() => {
+                this.pollWallets(count + 1);
+            }, 1000);
+            return;
+        }
+        this.setState({
+            wallets,
+            whichWalletSelected: wallets[0]
+        }, () => {
+            this.refreshData()
+        });
     }
 
     /**
@@ -187,22 +221,13 @@ export default class App extends React.Component
 
     /**
      * Checks if the wallet is running in the browser
-     * Does this for Nami, CCvault and Flint wallets
+     * Does this for Nami, Eternl and Flint wallets
      * @returns {boolean}
      */
 
     checkIfWalletFound = () => {
-        let walletFound = false;
-
-        const wallet = this.state.whichWalletSelected;
-        if (wallet === "nami") {
-            walletFound = !!window?.cardano?.nami
-        } else if (wallet === "ccvault") {
-            walletFound = !!window?.cardano?.ccvault
-        } else if (wallet === "flint") {
-            walletFound = !!window?.cardano?.flint
-        }
-
+        const walletKey = this.state.whichWalletSelected;
+        const walletFound = !!window?.cardano?.[walletKey];
         this.setState({walletFound})
         return walletFound;
     }
@@ -213,26 +238,17 @@ export default class App extends React.Component
      * @returns {Promise<boolean>}
      */
     checkIfWalletEnabled = async () => {
-
         let walletIsEnabled = false;
 
         try {
-            const wallet = this.state.whichWalletSelected;
-            if (wallet === "nami") {
-                walletIsEnabled = await window.cardano.nami.isEnabled();
-            } else if (wallet === "ccvault") {
-                walletIsEnabled = await window.cardano.ccvault.isEnabled();
-            } else if (wallet === "flint") {
-                walletIsEnabled = await window.cardano.flint.isEnabled();
-            }
-
-            this.setState({walletIsEnabled})
-
+            const walletName = this.state.whichWalletSelected;
+            walletIsEnabled = await window.cardano[walletName].isEnabled();
         } catch (err) {
             console.log(err)
         }
+        this.setState({walletIsEnabled});
 
-        return walletIsEnabled
+        return walletIsEnabled;
     }
 
     /**
@@ -240,27 +256,17 @@ export default class App extends React.Component
      * When this executes the user should get a window pop-up
      * from the wallet asking to approve the connection
      * of this app to the wallet
-     * @returns {Promise<void>}
+     * @returns {Promise<boolean>}
      */
 
     enableWallet = async () => {
+        const walletKey = this.state.whichWalletSelected;
         try {
-
-            const wallet = this.state.whichWalletSelected;
-            if (wallet === "nami") {
-                this.API = await window.cardano.nami.enable();
-            } else if (wallet === "ccvault") {
-                this.API = await window.cardano.ccvault.enable();
-            } else if (wallet === "flint") {
-                this.API = await window.cardano.flint.enable();
-            }
-
-            await this.checkIfWalletEnabled();
-            await this.getNetworkId();
-
-        } catch (err) {
-            console.log(err)
+            this.API = await window.cardano[walletKey].enable();
+        } catch(err) {
+            console.log(err);
         }
+        return this.checkIfWalletEnabled();
     }
 
     /**
@@ -269,41 +275,21 @@ export default class App extends React.Component
      * @returns {*}
      */
     getAPIVersion = () => {
-
-        let walletAPIVersion;
-
-        const wallet = this.state.whichWalletSelected;
-        if (wallet === "nami") {
-            walletAPIVersion = window?.cardano?.nami.apiVersion
-        } else if (wallet === "ccvault") {
-            walletAPIVersion = window?.cardano?.ccvault.apiVersion;
-        } else if (wallet === "flint") {
-            walletAPIVersion = window?.cardano?.flint.apiVersion;
-        }
-
+        const walletKey = this.state.whichWalletSelected;
+        const walletAPIVersion = window?.cardano?.[walletKey].apiVersion;
         this.setState({walletAPIVersion})
         return walletAPIVersion;
     }
 
     /**
-     * Get the name of the wallet (nami, ccvault, flint)
+     * Get the name of the wallet (nami, eternl, flint)
      * and store the name in the state
      * @returns {*}
      */
 
     getWalletName = () => {
-
-        let walletName;
-
-        const wallet = this.state.whichWalletSelected;
-        if (wallet === "nami") {
-            walletName = window?.cardano?.nami.name
-        } else if (wallet === "ccvault") {
-            walletName = window?.cardano?.ccvault.name
-        } else if (wallet === "flint") {
-            walletName = window?.cardano?.flint.name
-        }
-
+        const walletKey = this.state.whichWalletSelected;
+        const walletName = window?.cardano?.[walletKey].name;
         this.setState({walletName})
         return walletName;
     }
@@ -503,21 +489,53 @@ export default class App extends React.Component
      * @returns {Promise<void>}
      */
     refreshData = async () => {
-
         this.generateScriptAddress()
 
         try{
             const walletFound = this.checkIfWalletFound();
             if (walletFound) {
-                await this.enableWallet();
                 await this.getAPIVersion();
                 await this.getWalletName();
-                await this.getUtxos();
-                await this.getCollateral();
-                await this.getBalance();
-                await this.getChangeAddress();
-                await this.getRewardAddresses();
-                await this.getUsedAddresses();
+                const walletEnabled = await this.enableWallet();
+                if (walletEnabled) {
+                    await this.getNetworkId();
+                    await this.getUtxos();
+                    await this.getCollateral();
+                    await this.getBalance();
+                    await this.getChangeAddress();
+                    await this.getRewardAddresses();
+                    await this.getUsedAddresses();
+                } else {
+                    await this.setState({
+                        Utxos: null,
+                        CollatUtxos: null,
+                        balance: null,
+                        changeAddress: null,
+                        rewardAddress: null,
+                        usedAddress: null,
+
+                        txBody: null,
+                        txBodyCborHex_unsigned: "",
+                        txBodyCborHex_signed: "",
+                        submittedTxHash: "",
+                    });
+                }
+            } else {
+                await this.setState({
+                    walletIsEnabled: false,
+
+                    Utxos: null,
+                    CollatUtxos: null,
+                    balance: null,
+                    changeAddress: null,
+                    rewardAddress: null,
+                    usedAddress: null,
+
+                    txBody: null,
+                    txBodyCborHex_unsigned: "",
+                    txBodyCborHex_signed: "",
+                    submittedTxHash: "",
+                });
             }
         } catch (err) {
             console.log(err)
@@ -604,6 +622,9 @@ export default class App extends React.Component
         )
 
         let txVkeyWitnesses = await this.API.signTx(Buffer.from(tx.to_bytes(), "utf8").toString("hex"), true);
+
+        console.log(txVkeyWitnesses)
+
         txVkeyWitnesses = TransactionWitnessSet.from_bytes(Buffer.from(txVkeyWitnesses, "hex"));
 
         transactionWitnessSet.set_vkeys(txVkeyWitnesses.vkeys());
@@ -612,6 +633,7 @@ export default class App extends React.Component
             tx.body(),
             transactionWitnessSet
         );
+
 
         const submittedTxHash = await this.API.submitTx(Buffer.from(signedTx.to_bytes(), "utf8").toString("hex"));
         console.log(submittedTxHash)
@@ -760,6 +782,9 @@ export default class App extends React.Component
 
         txOutputBuilder = txOutputBuilder.next();
 
+
+
+
         let multiAsset = MultiAsset.new();
         let assets = Assets.new()
         assets.insert(
@@ -783,6 +808,9 @@ export default class App extends React.Component
         // us them as Inputs
         const txUnspentOutputs = await this.getTxUnspentOutputs();
         txBuilder.add_inputs_from(txUnspentOutputs, 3)
+
+
+
 
 
         // calculate the min fee required and send any change to an address
@@ -883,7 +911,44 @@ export default class App extends React.Component
         transactionWitnessSet.set_plutus_data(datums)
         transactionWitnessSet.set_redeemers(redeemers)
 
-        const cost_model_vals = [197209, 0, 1, 1, 396231, 621, 0, 1, 150000, 1000, 0, 1, 150000, 32, 2477736, 29175, 4, 29773, 100, 29773, 100, 29773, 100, 29773, 100, 29773, 100, 29773, 100, 100, 100, 29773, 100, 150000, 32, 150000, 32, 150000, 32, 150000, 1000, 0, 1, 150000, 32, 150000, 1000, 0, 8, 148000, 425507, 118, 0, 1, 1, 150000, 1000, 0, 8, 150000, 112536, 247, 1, 150000, 10000, 1, 136542, 1326, 1, 1000, 150000, 1000, 1, 150000, 32, 150000, 32, 150000, 32, 1, 1, 150000, 1, 150000, 4, 103599, 248, 1, 103599, 248, 1, 145276, 1366, 1, 179690, 497, 1, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 148000, 425507, 118, 0, 1, 1, 61516, 11218, 0, 1, 150000, 32, 148000, 425507, 118, 0, 1, 1, 148000, 425507, 118, 0, 1, 1, 2477736, 29175, 4, 0, 82363, 4, 150000, 5000, 0, 1, 150000, 32, 197209, 0, 1, 1, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 3345831, 1, 1];
+        // Pre Vasil hard fork cost model
+        // const cost_model_vals = [
+        //     197209, 0, 1, 1, 396231, 621, 0, 1, 150000, 1000,
+        //     0, 1, 150000, 32, 2477736, 29175, 4, 29773, 100, 29773, 100, 29773, 100,
+        //     29773, 100, 29773, 100, 29773, 100, 100, 100, 29773, 100, 150000, 32, 150000,
+        //     32, 150000, 32, 150000, 1000, 0, 1, 150000, 32, 150000, 1000, 0, 8, 148000,
+        //     425507, 118, 0, 1, 1, 150000, 1000, 0, 8, 150000, 112536, 247, 1, 150000,
+        //     10000, 1, 136542, 1326, 1, 1000, 150000, 1000, 1, 150000, 32, 150000, 32,
+        //     150000, 32, 1, 1, 150000, 1, 150000, 4, 103599, 248, 1, 103599, 248, 1,
+        //     145276, 1366, 1, 179690, 497, 1, 150000, 32, 150000, 32, 150000, 32, 150000,
+        //     32, 150000, 32, 150000, 32, 148000, 425507, 118, 0, 1, 1, 61516, 11218, 0,
+        //     1, 150000, 32, 148000, 425507, 118, 0, 1, 1, 148000, 425507, 118, 0, 1, 1,
+        //     2477736, 29175, 4, 0, 82363, 4, 150000, 5000, 0, 1, 150000, 32, 197209, 0,
+        //     1, 1, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32,
+        //     150000, 32, 3345831, 1, 1
+        // ];
+
+        /*
+        Post Vasil hard fork cost model
+        If you need to make this code work on the Mainnet, before Vasil hard-fork
+        Then you need to comment this section below and uncomment the cost model above
+        Otherwise it will give errors when redeeming from Scripts
+        Sending assets and ada to Script addresses is unaffected by this cost model
+         */
+        const cost_model_vals = [
+            205665, 812, 1, 1, 1000, 571, 0, 1, 1000, 24177, 4, 1, 1000, 32, 117366,
+            10475, 4, 23000, 100, 23000, 100, 23000, 100, 23000, 100, 23000, 100, 23000,
+            100, 100, 100, 23000, 100, 19537, 32, 175354, 32, 46417, 4, 221973, 511, 0, 1,
+            89141, 32, 497525, 14068, 4, 2, 196500, 453240, 220, 0, 1, 1, 1000, 28662, 4,
+            2, 245000, 216773, 62, 1, 1060367, 12586, 1, 208512, 421, 1, 187000, 1000,
+            52998, 1, 80436, 32, 43249, 32, 1000, 32, 80556, 1, 57667, 4, 1000, 10,
+            197145, 156, 1, 197145, 156, 1, 204924, 473, 1, 208896, 511, 1, 52467, 32,
+            64832, 32, 65493, 32, 22558, 32, 16563, 32, 76511, 32, 196500, 453240, 220, 0,
+            1, 1, 69522, 11687, 0, 1, 60091, 32, 196500, 453240, 220, 0, 1, 1, 196500,
+            453240, 220, 0, 1, 1, 806990, 30482, 4, 1927926, 82523, 4, 265318, 0, 4, 0,
+            85931, 32, 205665, 812, 1, 1, 41182, 32, 212342, 32, 31220, 32, 32696, 32,
+            43357, 32, 32247, 32, 38314, 32, 9462713, 1021, 10,
+        ];
 
         const costModel = CostModel.new();
         cost_model_vals.forEach((x, i) => costModel.set(i, Int.new_i32(x)));
@@ -1014,7 +1079,30 @@ export default class App extends React.Component
         transactionWitnessSet.set_plutus_data(datums)
         transactionWitnessSet.set_redeemers(redeemers)
 
-        const cost_model_vals = [197209, 0, 1, 1, 396231, 621, 0, 1, 150000, 1000, 0, 1, 150000, 32, 2477736, 29175, 4, 29773, 100, 29773, 100, 29773, 100, 29773, 100, 29773, 100, 29773, 100, 100, 100, 29773, 100, 150000, 32, 150000, 32, 150000, 32, 150000, 1000, 0, 1, 150000, 32, 150000, 1000, 0, 8, 148000, 425507, 118, 0, 1, 1, 150000, 1000, 0, 8, 150000, 112536, 247, 1, 150000, 10000, 1, 136542, 1326, 1, 1000, 150000, 1000, 1, 150000, 32, 150000, 32, 150000, 32, 1, 1, 150000, 1, 150000, 4, 103599, 248, 1, 103599, 248, 1, 145276, 1366, 1, 179690, 497, 1, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 148000, 425507, 118, 0, 1, 1, 61516, 11218, 0, 1, 150000, 32, 148000, 425507, 118, 0, 1, 1, 148000, 425507, 118, 0, 1, 1, 2477736, 29175, 4, 0, 82363, 4, 150000, 5000, 0, 1, 150000, 32, 197209, 0, 1, 1, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 3345831, 1, 1];
+        // Pre Vasil hard fork cost model
+        // const cost_model_vals = [197209, 0, 1, 1, 396231, 621, 0, 1, 150000, 1000, 0, 1, 150000, 32, 2477736, 29175, 4, 29773, 100, 29773, 100, 29773, 100, 29773, 100, 29773, 100, 29773, 100, 100, 100, 29773, 100, 150000, 32, 150000, 32, 150000, 32, 150000, 1000, 0, 1, 150000, 32, 150000, 1000, 0, 8, 148000, 425507, 118, 0, 1, 1, 150000, 1000, 0, 8, 150000, 112536, 247, 1, 150000, 10000, 1, 136542, 1326, 1, 1000, 150000, 1000, 1, 150000, 32, 150000, 32, 150000, 32, 1, 1, 150000, 1, 150000, 4, 103599, 248, 1, 103599, 248, 1, 145276, 1366, 1, 179690, 497, 1, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 148000, 425507, 118, 0, 1, 1, 61516, 11218, 0, 1, 150000, 32, 148000, 425507, 118, 0, 1, 1, 148000, 425507, 118, 0, 1, 1, 2477736, 29175, 4, 0, 82363, 4, 150000, 5000, 0, 1, 150000, 32, 197209, 0, 1, 1, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 150000, 32, 3345831, 1, 1];
+
+        /*
+        Post Vasil hard fork cost model
+        If you need to make this code work on the Mainnnet, before Vasil hard-fork
+        Then you need to comment this section below and uncomment the cost model above
+        Otherwise it will give errors when redeeming from Scripts
+        Sending assets and ada to Script addresses is unaffected by this cost model
+         */
+        const cost_model_vals = [
+            205665, 812, 1, 1, 1000, 571, 0, 1, 1000, 24177, 4, 1, 1000, 32, 117366,
+            10475, 4, 23000, 100, 23000, 100, 23000, 100, 23000, 100, 23000, 100, 23000,
+            100, 100, 100, 23000, 100, 19537, 32, 175354, 32, 46417, 4, 221973, 511, 0, 1,
+            89141, 32, 497525, 14068, 4, 2, 196500, 453240, 220, 0, 1, 1, 1000, 28662, 4,
+            2, 245000, 216773, 62, 1, 1060367, 12586, 1, 208512, 421, 1, 187000, 1000,
+            52998, 1, 80436, 32, 43249, 32, 1000, 32, 80556, 1, 57667, 4, 1000, 10,
+            197145, 156, 1, 197145, 156, 1, 204924, 473, 1, 208896, 511, 1, 52467, 32,
+            64832, 32, 65493, 32, 22558, 32, 16563, 32, 76511, 32, 196500, 453240, 220, 0,
+            1, 1, 69522, 11687, 0, 1, 60091, 32, 196500, 453240, 220, 0, 1, 1, 196500,
+            453240, 220, 0, 1, 1, 806990, 30482, 4, 1927926, 82523, 4, 265318, 0, 4, 0,
+            85931, 32, 205665, 812, 1, 1, 41182, 32, 212342, 32, 31220, 32, 32696, 32,
+            43357, 32, 32247, 32, 38314, 32, 9462713, 1021, 10,
+        ];
 
         const costModel = CostModel.new();
         cost_model_vals.forEach((x, i) => costModel.set(i, Int.new_i32(x)));
@@ -1058,6 +1146,7 @@ export default class App extends React.Component
 
 
     async componentDidMount() {
+        this.pollWallets();
         await this.refreshData();
     }
 
@@ -1071,15 +1160,22 @@ export default class App extends React.Component
 
                 <h1>Boilerplate DApp connector to Wallet</h1>
                 <div style={{paddingTop: "10px"}}>
+                    <div style={{marginBottom: 15}}>Select wallet:</div>
                     <RadioGroup
-                        label="Select Wallet:"
                         onChange={this.handleWalletSelect}
                         selectedValue={this.state.whichWalletSelected}
                         inline={true}
+                        className="wallets-wrapper"
                     >
-                        <Radio label="Nami" value="nami" />
-                        <Radio label="CCvault" value="ccvault" />
-                        <Radio label="Flint" value="flint" />
+                        { this.state.wallets.map(key =>
+                            <Radio
+                                key={key}
+                                className="wallet-label"
+                                value={key}>
+                                <img src={window.cardano[key].icon} width={24} height={24} alt={key}/>
+                                {window.cardano[key].name} ({key})
+                            </Radio>
+                        )}
                     </RadioGroup>
                 </div>
 
